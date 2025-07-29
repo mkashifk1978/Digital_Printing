@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>🖨️ Digital Printing Machines Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      margin: 0;
+      background-color: #f0f0f0;
+      text-align: center;
+    }
+    h1, h2 {
+      font-size: 1.5rem;
+      margin-bottom: 15px;
+    }
+    table {
+      width: 100%;
+      max-width: 800px;
+      margin: 20px auto;
+      border-collapse: collapse;
+      background: white;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 10px;
+      font-size: 1rem;
+    }
+    th {
+      background-color: #f8f8f8;
+    }
+    .RUN { color: green; font-weight: bold; }
+    .STOP { color: red; font-weight: bold; }
+    #last-refresh {
+      margin-top: 20px;
+      font-size: 0.9rem;
+      color: gray;
+    }
+    .bar-container {
+      background: #eee;
+      border-radius: 5px;
+      overflow: hidden;
+      height: 20px;
+      width: 100%;
+    }
+    .bar {
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <h1>🖨️ Digital Printing Machines Monitor</h1>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Machine</th>
+        <th>Status</th>
+        <th>Run Time</th>
+        <th>Prev Run</th>
+      </tr>
+    </thead>
+    <tbody id="machine-table">
+      <tr><td colspan="4">Loading...</td></tr>
+    </tbody>
+  </table>
+
+  <h2>📈 Machine Efficiency</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Machine</th>
+        <th>Today</th>
+        <th>Yesterday</th>
+      </tr>
+    </thead>
+    <tbody id="efficiency-table">
+      <tr><td colspan="3">Calculating...</td></tr>
+    </tbody>
+  </table>
+
+  <div id="last-refresh">Last checked: --</div>
+
+  <script>
+    const machines = [
+      { name: "ReNoir 180/8/8", channel: "3005420", key: "Q32OLN4B7P4FX7SN" },
+      { name: "ReNoir 180/16/16", channel: "3005506", key: "VPLHGHN61M46KJBF" },
+      { name: "ReNoir 180/32/32", channel: "3005507", key: "9PTCDKPDXFGWWS1O" },
+      { name: "POWER 180/32/32", channel: "3005514", key: "WVCD3100F33WOUWW" },
+      { name: "TERATITAN 180/32/32", channel: "3005515", key: "XWDJ16K8QJAI423D" }
+    ];
+
+    function minutesToHHMM(mins) {
+      mins = parseInt(mins);
+      if (isNaN(mins)) return "--:--";
+      const h = Math.floor(mins / 60).toString().padStart(2, '0');
+      const m = (mins % 60).toString().padStart(2, '0');
+      return `${h}:${m}`;
+    }
+
+async function fetchMachineData(machine) {
+  const url = `https://api.thingspeak.com/channels/${machine.channel}/feeds.json?api_key=${machine.key}&results=5`;
+
+  try {
+    const res = await fetch(url);
+    const json = await res.json();
+    const feeds = json.feeds;
+
+    if (!feeds || feeds.length === 0) throw "No feed data";
+
+    // Initialize with nulls
+    let statusVal = null, runMin = null, stopMin = null;
+
+    // Loop backward to get latest non-null values
+    for (let i = feeds.length - 1; i >= 0; i--) {
+      const f = feeds[i];
+      if (!statusVal && f.field1 !== null) statusVal = f.field1;
+      if (!runMin && f.field2 !== null) runMin = f.field2;
+      if (!stopMin && f.field3 !== null) stopMin = f.field3;
+      if (statusVal && runMin && stopMin) break; // Exit early if all found
+    }
+
+    const status = parseInt(statusVal) === 1 ? "RUN" : "STOP";
+    const runTime = minutesToHHMM(runMin || "0");
+    const stopTime = minutesToHHMM(stopMin || "0");
+
+    return {
+      name: machine.name,
+      status,
+      runTime,
+      stopTime
+    };
+  } catch (e) {
+    console.error(`Error fetching status for ${machine.name}`, e);
+    return {
+      name: machine.name,
+      status: "ERROR",
+      runTime: "--:--",
+      stopTime: "--:--"
+    };
+  }
+}
+
+    async function updateDashboard() {
+      const table = document.getElementById("machine-table");
+      table.innerHTML = "";
+
+      const results = await Promise.all(machines.map(fetchMachineData));
+
+      for (const m of results) {
+        table.innerHTML += `
+          <tr>
+            <td>${m.name}</td>
+            <td class="${m.status}">${m.status}</td>
+            <td>${m.runTime}</td>
+            <td>${m.stopTime}</td>
+          </tr>
+        `;
+      }
+
+      document.getElementById("last-refresh").textContent =
+        "Last checked: " + new Date().toLocaleTimeString();
+    }
+
+    function getShiftBoundaries() {
+  const now = new Date();
+  const shiftStart = new Date(now);
+  shiftStart.setHours(7, 30, 0, 0);
+
+  let todayStart, todayEnd, yestStart, yestEnd;
+
+  if (now >= shiftStart) {
+    todayStart = new Date(shiftStart);
+    todayEnd = new Date(shiftStart);
+    todayEnd.setDate(todayEnd.getDate() + 1);
+
+    yestStart = new Date(shiftStart);
+    yestStart.setDate(yestStart.getDate() - 1);
+    yestEnd = new Date(shiftStart);
+  } else {
+    todayStart = new Date(shiftStart);
+    todayStart.setDate(todayStart.getDate() - 1);
+    todayEnd = new Date(shiftStart);
+
+    yestStart = new Date(shiftStart);
+    yestStart.setDate(yestStart.getDate() - 2);
+    yestEnd = new Date(shiftStart);
+    yestEnd.setDate(yestEnd.getDate() - 1);
+  }
+
+  return { now, todayStart, todayEnd, yestStart, yestEnd };
+}
+function getEfficiencyBar(percent) {
+  const color =
+    percent >= 90 ? 'green' :
+    percent >= 60 ? 'orange' :
+    percent >= 30 ? 'goldenrod' :
+    'red';
+
+  return `
+    <div class="bar-container">
+      <div class="bar" style="width:${percent}%; background:${color};"></div>
+    </div>
+    <small>${percent.toFixed(1)}%</small>
+  `;
+}
+
+async function fetchEfficiency(machine) {
+  const url = `https://api.thingspeak.com/channels/${machine.channel}/feeds.json?api_key=${machine.key}&results=5`;
+  const { now, todayStart } = getShiftBoundaries();
+
+  try {
+    const res = await fetch(url);
+    const json = await res.json();
+    const feeds = json.feeds;
+
+    if (!feeds || feeds.length === 0) throw "No data";
+
+    // Find latest non-null field2 and field3
+    let runToday = null, runYesterday = null;
+    for (let i = feeds.length - 1; i >= 0; i--) {
+      const f = feeds[i];
+      if (runToday === null && f.field2 !== null) runToday = parseInt(f.field2);
+      if (runYesterday === null && f.field3 !== null) runYesterday = parseInt(f.field3);
+      if (runToday !== null && runYesterday !== null) break;
+    }
+
+    runToday = isNaN(runToday) ? 0 : runToday;
+    runYesterday = isNaN(runYesterday) ? 0 : runYesterday;
+
+    const elapsedToday = Math.floor((now - todayStart) / 60000);
+
+    const todayEff = elapsedToday > 0
+      ? Math.min((runToday / elapsedToday) * 100, 100)
+      : 0;
+
+    const yestEff = Math.min((runYesterday / 1440) * 100, 100);
+
+    return {
+      name: machine.name,
+      todayEff: getEfficiencyBar(todayEff),
+      yestEff: getEfficiencyBar(yestEff)
+    };
+  } catch (e) {
+    console.error(`Error fetching efficiency for ${machine.name}`, e);
+    return {
+      name: machine.name,
+      todayEff: "⚠️",
+      yestEff: "⚠️"
+    };
+  }
+}
+
+
+    async function updateEfficiency() {
+      const table = document.getElementById("efficiency-table");
+      table.innerHTML = "";
+
+      const results = await Promise.all(machines.map(fetchEfficiency));
+
+      for (const m of results) {
+        table.innerHTML += `
+          <tr>
+            <td>${m.name}</td>
+            <td>${m.todayEff}</td>
+            <td>${m.yestEff}</td>
+          </tr>
+        `;
+      }
+    }
+
+    updateDashboard();
+    updateEfficiency();
+    setInterval(() => {
+      updateDashboard();
+      updateEfficiency();
+    }, 30000);
+  </script>
+</body>
+</html>
